@@ -264,6 +264,8 @@ class PartControl(QFrame):
     def __init__(self, name, initial_color):
         super().__init__()
         self.setObjectName("ControlCard")
+        self.part_name = name
+        self.viewer_3d = None  # Will be set after viewer is initialized
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
@@ -281,7 +283,7 @@ class PartControl(QFrame):
         opacity_row = QHBoxLayout()
         opacity_label = QLabel("Opacity")
         opacity_label.setStyleSheet(f"color: {THEME['text_secondary']}; font-size: 12px;")
-        self.opacity_value = QLabel("85%")
+        self.opacity_value = QLabel("70%")
         self.opacity_value.setStyleSheet(f"color: {THEME['accent']}; font-size: 12px; font-weight: 600;")
         opacity_row.addWidget(opacity_label)
         opacity_row.addStretch()
@@ -290,7 +292,7 @@ class PartControl(QFrame):
         
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 100)
-        self.slider.setValue(85)
+        self.slider.setValue(70)
         self.slider.valueChanged.connect(lambda v: self.opacity_value.setText(f"{v}%"))
         layout.addWidget(self.slider)
 
@@ -320,6 +322,10 @@ class PartControl(QFrame):
                 border-radius: 8px;
                 padding: 10px;
             """)
+            # Update 3D viewer color
+            if self.viewer_3d:
+                color_tuple = (color.redF(), color.greenF(), color.blueF())
+                self.viewer_3d.set_part_color(self.part_name, color_tuple)
 
 class MedicalWorkspace(QMainWindow):
     # Model folder mapping
@@ -357,6 +363,7 @@ class MedicalWorkspace(QMainWindow):
         self.current_model = "Swin UNETR"
         self.viewer_3d = None
         self.metrics_labels = {}
+        self.part_controls = []  # Store part controls for connecting to viewer
         
         # Load metrics from CSV files
         self.metrics_data = self.load_all_metrics()
@@ -658,10 +665,12 @@ class MedicalWorkspace(QMainWindow):
         right.addWidget(layers_header)
         
         part_colors = ["#FFB347", "#FF6B8A", "#4DD4AC"]
+        self.part_controls = []
         for i, part_name in enumerate(self.organ_data[organ_name]):
             control = PartControl(part_name, part_colors[i])
             add_shadow(control, blur=15, offset=3)
             right.addWidget(control)
+            self.part_controls.append(control)
         
         right.addStretch()
 
@@ -691,7 +700,7 @@ class MedicalWorkspace(QMainWindow):
         return os.path.abspath(asset_path)
     
     def load_model_data(self):
-        """Load 3D data for the current model and organ."""
+        """Load 3D data for the current model and organ, split into 3 parts."""
         if self.viewer_3d is None:
             return
         
@@ -706,11 +715,45 @@ class MedicalWorkspace(QMainWindow):
             QApplication.processEvents()
             if self.viewer_3d.load_nifti(asset_path):
                 QApplication.processEvents()
-                self.viewer_3d.generate_hollow_3d(wall_thickness=2, opacity=0.7)
+                
+                # Get part names and colors
+                part_names = self.organ_data[self.current_organ]
+                part_colors = [
+                    (1.0, 0.7, 0.28),   # Orange #FFB347
+                    (1.0, 0.42, 0.54),  # Pink #FF6B8A
+                    (0.3, 0.83, 0.67)   # Teal #4DD4AC
+                ]
+                
+                # Generate 3 parts
+                if self.viewer_3d.generate_3_parts(part_names, part_colors, opacity=0.7):
+                    QApplication.processEvents()
+                    # Connect part controls to viewer
+                    self.connect_part_controls()
             else:
                 print(f"Failed to load: {asset_path}")
         else:
             print(f"Asset not found: {asset_path}")
+    
+    def connect_part_controls(self):
+        """Connect part control widgets to their respective 3D actors."""
+        for control in self.part_controls:
+            part_name = control.part_name
+            
+            # Set viewer reference for color picker
+            control.viewer_3d = self.viewer_3d
+            
+            # Connect visibility checkbox
+            control.visible_chk.toggled.connect(
+                lambda checked, pn=part_name: self.viewer_3d.set_part_visibility(pn, checked)
+            )
+            
+            # Connect opacity slider
+            control.slider.valueChanged.connect(
+                lambda val, pn=part_name: self.viewer_3d.set_part_opacity(pn, val)
+            )
+            
+            # Apply initial opacity from slider
+            self.viewer_3d.set_part_opacity(part_name, control.slider.value())
     
     def on_model_changed(self, model_name):
         """Handle model dropdown change."""
