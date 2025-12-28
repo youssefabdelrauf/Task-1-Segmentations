@@ -52,6 +52,7 @@ class VTK3DViewer(QWidget):
         self.actors = {}
         self.np_data = None
         self.spacing = (1.0, 1.0, 1.0)
+        self.origin = (0.0, 0.0, 0.0)
         if self.vtk_initialized:
             self.vtkWidget.GetRenderWindow().Render()
     
@@ -190,108 +191,85 @@ class VTK3DViewer(QWidget):
         }
         return colors.get(name, (0.8, 0.8, 0.8))
 
-    def generate_3_parts(self, part_names, part_colors, opacity=0.7):
-        """Split the organ into 3 parts along Z-axis and create separate actors."""
-        if self.np_data is None:
-            print("No data to generate 3D")
-            return False
-        
+    def add_part_from_nifti(self, file_path, part_name, color, opacity=0.7):
+        """Load a NIfTI file as a separate part/actor."""
         try:
-            # Find organ voxels (non-zero)
-            organ_mask = self.np_data > 0
-            z_indices = np.where(organ_mask)[0]
+            print(f"Loading part {part_name} from: {file_path}")
+            img = sitk.ReadImage(file_path)
+            img = sitk.DICOMOrient(img, 'LPS')
             
-            if len(z_indices) == 0:
-                print("No organ data found")
+            np_data = sitk.GetArrayFromImage(img)
+            spacing = img.GetSpacing()
+            
+            # Downsample if too large
+            if max(np_data.shape) > 256:
+                np_data = np_data[::2, ::2, ::2]
+                spacing = tuple(s * 2 for s in spacing)
+
+            depth, height, width = np_data.shape
+            
+            # Create VTK image data
+            img_data = vtk.vtkImageData()
+            img_data.SetDimensions(width, height, depth)
+            img_data.SetSpacing(spacing)
+            img_data.SetOrigin(0, 0, 0)
+            
+            vtk_type = numpy_support.get_vtk_array_type(np_data.dtype)
+            data_perm = np.transpose(np_data, (2, 1, 0))
+            flat_data = data_perm.flatten(order='F')
+            
+            vtk_array = numpy_support.numpy_to_vtk(num_array=flat_data, deep=True, array_type=vtk_type)
+            img_data.GetPointData().SetScalars(vtk_array)
+            
+            # Find target label
+            unique_labels = np.unique(np_data)
+            valid_labels = [x for x in unique_labels if x > 0]
+            if not valid_labels:
+                print(f"No label found in {file_path}")
                 return False
+            target_label = valid_labels[0]
             
-            z_min, z_max = z_indices.min(), z_indices.max()
-            z_range = z_max - z_min
+            # Marching Cubes
+            mc = vtk.vtkDiscreteMarchingCubes()
+            mc.SetInputData(img_data)
+            mc.ComputeNormalsOn()
+            mc.GenerateValues(1, target_label, target_label)
             
-            # Define 3 regions (upper, middle, lower)
-            boundaries = [
-                (z_min, z_min + z_range // 3),
-                (z_min + z_range // 3, z_min + 2 * z_range // 3),
-                (z_min + 2 * z_range // 3, z_max + 1)
-            ]
+            # Smooth
+            smoother = vtk.vtkWindowedSincPolyDataFilter()
+            smoother.SetInputConnection(mc.GetOutputPort())
+            smoother.SetNumberOfIterations(15)
+            smoother.BoundarySmoothingOff()
+            smoother.FeatureEdgeSmoothingOff()
+            smoother.SetPassBand(0.001)
+            smoother.NonManifoldSmoothingOn()
+            smoother.NormalizeCoordinatesOn()
+            smoother.Update()
             
-            depth, height, width = self.np_data.shape
+            # Mapper
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(smoother.GetOutputPort())
+            mapper.ScalarVisibilityOff()
             
-            for i, (part_name, color) in enumerate(zip(part_names, part_colors)):
-                z_start, z_end = boundaries[i]
-                
-                # Create mask for this part
-                part_data = np.zeros_like(self.np_data)
-                part_data[z_start:z_end, :, :] = self.np_data[z_start:z_end, :, :]
-                
-                # Skip if empty
-                if not np.any(part_data > 0):
-                    print(f"Part {part_name} is empty, skipping")
-                    continue
-                
-                # Create VTK image data
-                img_data = vtk.vtkImageData()
-                img_data.SetDimensions(width, height, depth)
-                img_data.SetSpacing(self.spacing)
-                img_data.SetOrigin(0, 0, 0)
-                
-                vtk_type = numpy_support.get_vtk_array_type(part_data.dtype)
-                data_perm = np.transpose(part_data, (2, 1, 0))
-                flat_data = data_perm.flatten(order='F')
-                
-                vtk_array = numpy_support.numpy_to_vtk(num_array=flat_data, deep=True, array_type=vtk_type)
-                img_data.GetPointData().SetScalars(vtk_array)
-                
-                # Find target label
-                unique_labels = np.unique(part_data)
-                valid_labels = [x for x in unique_labels if x > 0]
-                if not valid_labels:
-                    continue
-                target_label = valid_labels[0]
-                
-                # Marching Cubes
-                mc = vtk.vtkDiscreteMarchingCubes()
-                mc.SetInputData(img_data)
-                mc.ComputeNormalsOn()
-                mc.GenerateValues(1, target_label, target_label)
-                
-                # Smooth
-                smoother = vtk.vtkWindowedSincPolyDataFilter()
-                smoother.SetInputConnection(mc.GetOutputPort())
-                smoother.SetNumberOfIterations(15)
-                smoother.BoundarySmoothingOff()
-                smoother.FeatureEdgeSmoothingOff()
-                smoother.SetPassBand(0.001)
-                smoother.NonManifoldSmoothingOn()
-                smoother.NormalizeCoordinatesOn()
-                smoother.Update()
-                
-                # Mapper
-                mapper = vtk.vtkPolyDataMapper()
-                mapper.SetInputConnection(smoother.GetOutputPort())
-                mapper.ScalarVisibilityOff()
-                
-                # Actor
-                actor = vtk.vtkActor()
-                actor.SetMapper(mapper)
-                actor.GetProperty().SetOpacity(opacity)
-                actor.GetProperty().SetColor(color)
-                actor.GetProperty().SetSpecular(0.5)
-                actor.GetProperty().SetSpecularPower(20)
-                
-                self.actors[part_name] = actor
-                self.renderer.AddActor(actor)
-                print(f"Created part: {part_name}")
+            # Actor
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetOpacity(opacity)
+            actor.GetProperty().SetColor(color)
+            actor.GetProperty().SetSpecular(0.5)
+            actor.GetProperty().SetSpecularPower(20)
+            
+            self.actors[part_name] = actor
+            self.renderer.AddActor(actor)
             
             self.renderer.ResetCamera()
             self.vtkWidget.GetRenderWindow().Render()
             return True
             
         except Exception as e:
-            print(f"Error generating 3 parts: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"Error adding part {part_name}: {e}")
             return False
+
 
     def set_part_opacity(self, part_name, val):
         """Set opacity for a specific part (0-100)."""

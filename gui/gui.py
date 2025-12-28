@@ -2,7 +2,8 @@ import sys
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QStackedWidget, 
                              QSlider, QCheckBox, QColorDialog, QFrame, QComboBox, 
-                             QGridLayout, QGraphicsDropShadowEffect, QFileDialog)
+                             QGridLayout, QGraphicsDropShadowEffect, QFileDialog,
+                             QScrollArea)
 from PyQt6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt6.QtGui import QColor, QFont, QPalette, QIcon, QPixmap, QLinearGradient, QBrush, QPainter, QPainterPath
 import os
@@ -266,8 +267,10 @@ class PartControl(QFrame):
         self.setObjectName("ControlCard")
         self.part_name = name
         self.viewer_3d = None  # Will be set after viewer is initialized
+        self.setMaximumWidth(290)
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
+        layout.setContentsMargins(14, 12, 14, 12)
 
         # Part Title & Visibility
         header = QHBoxLayout()
@@ -433,9 +436,21 @@ class MedicalWorkspace(QMainWindow):
         grid.setSpacing(50)
 
         self.organ_data = {
-            "Liver": ["Right Lobe", "Left Lobe", "Gallbladder"],
-            "Kidneys": ["Left Kidney", "Right Kidney", "Adrenal Glands"],
-            "Stomach": ["Fundus", "Gastric Body", "Antrum"]
+            "Liver": {
+                "Swin UNETR": [("liver.nii.gz", "Liver"), ("gallbladder.nii.gz", "Gallbladder"), ("spleen.nii.gz", "Spleen"), ("portal_vein_and_splenic_vein.nii.gz", "Portal/Splenic Vein")],
+                "Total Segmentator": [("ct_liver.nii.gz", "Liver"), ("ct_gallbladder.nii.gz", "Gallbladder"), ("ct_spleen.nii.gz", "Spleen"), ("ct_portal_vein_and_splenic_vein.nii.gz", "Portal/Splenic Vein")],
+                "WholeBody CT": [("liver.nii.gz", "Liver"), ("gallbladder.nii.gz", "Gallbladder"), ("spleen.nii.gz", "Spleen"), ("portal_vein_and_splenic_vein.nii.gz", "Portal/Splenic Vein")]
+            },
+            "Kidneys": {
+                "Swin UNETR": [("kidney_left.nii.gz", "Left Kidney"), ("kidney_right.nii.gz", "Right Kidney"), ("adrenal_gland_left.nii.gz", "Left Adrenal"), ("adrenal_gland_right.nii.gz", "Right Adrenal"), ("aorta.nii.gz", "Aorta"), ("inferior_vena_cava.nii.gz", "Inferior Vena Cava")],
+                "Total Segmentator": [("ct_kidney_left.nii.gz", "Left Kidney"), ("ct_kidney_right.nii.gz", "Right Kidney"), ("ct_adrenal_gland_left.nii.gz", "Left Adrenal"), ("ct_adrenal_gland_right.nii.gz", "Right Adrenal"), ("ct_aorta.nii.gz", "Aorta"), ("ct_inferior_vena_cava.nii.gz", "Inferior Vena Cava")],
+                "WholeBody CT": [("kidney_left.nii.gz", "Left Kidney"), ("kidney_right.nii.gz", "Right Kidney"), ("adrenal_gland_left.nii.gz", "Left Adrenal"), ("adrenal_gland_right.nii.gz", "Right Adrenal"), ("aorta.nii.gz", "Aorta"), ("inferior_vena_cava.nii.gz", "Inferior Vena Cava")]
+            },
+            "Stomach": {
+                "Swin UNETR": [("stomach.nii.gz", "Stomach"), ("pancreas.nii.gz", "Pancreas"), ("esophagus.nii.gz", "Esophagus")],
+                "Total Segmentator": [("ct_stomach.nii.gz", "Stomach"), ("ct_pancreas.nii.gz", "Pancreas"), ("ct_esophagus.nii.gz", "Esophagus")],
+                "WholeBody CT": [("stomach.nii.gz", "Stomach"), ("pancreas.nii.gz", "Pancreas"), ("esophagus.nii.gz", "Esophagus")]
+            }
         }
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -656,27 +671,80 @@ class MedicalWorkspace(QMainWindow):
             placeholder_layout.addWidget(placeholder_label)
             c_lay.addWidget(placeholder)
 
-        # --- RIGHT PANEL ---
+        # --- RIGHT PANEL with Scroll Area ---
+        right_outer = QWidget()
+        right_outer.setFixedWidth(320)
+        right_outer_layout = QVBoxLayout(right_outer)
+        right_outer_layout.setSpacing(12)
+        right_outer_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Header stays fixed at top
+        layers_header = QLabel("<span style='font-size: 16px; font-weight: 600;'>Visualization Layers</span>")
+        right_outer_layout.addWidget(layers_header)
+        
+        # Scroll area for part controls
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        right_scroll.setStyleSheet(f"""
+            QScrollArea {{
+                background: transparent;
+                border: none;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background: transparent;
+            }}
+            QScrollBar:vertical {{
+                background: rgba(20, 20, 50, 0.3);
+                width: 10px;
+                border-radius: 5px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {THEME['accent']};
+                border-radius: 5px;
+                min-height: 30px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {THEME['accent_bright']};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+        """)
+        
         right_container = QWidget()
+        right_container.setStyleSheet("background: transparent;")
         right = QVBoxLayout(right_container)
         right.setSpacing(12)
+        right.setContentsMargins(10, 5, 10, 5)
+        right.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         
-        layers_header = QLabel("<span style='font-size: 16px; font-weight: 600;'>Visualization Layers</span>")
-        right.addWidget(layers_header)
-        
-        part_colors = ["#FFB347", "#FF6B8A", "#4DD4AC"]
+        part_colors = ["#FFB347", "#FF6B8A", "#4DD4AC", "#A855F7", "#22D3EE"]
         self.part_controls = []
-        for i, part_name in enumerate(self.organ_data[organ_name]):
-            control = PartControl(part_name, part_colors[i])
+        
+        # Get parts for current organ and model
+        parts = self.organ_data[organ_name].get(self.current_model, [])
+        for i, (file_name, part_label) in enumerate(parts):
+            color = part_colors[i % len(part_colors)]
+            control = PartControl(part_label, color)
             add_shadow(control, blur=15, offset=3)
             right.addWidget(control)
             self.part_controls.append(control)
         
         right.addStretch()
+        
+        # Store right panel for updates
+        self.right_panel_layout = right
+        self.right_panel_container = right_container
+        
+        right_scroll.setWidget(right_container)
+        right_outer_layout.addWidget(right_scroll)
 
         layout.addWidget(left)
         layout.addWidget(center, stretch=2)
-        layout.addWidget(right_container)
+        layout.addWidget(right_outer)
 
         self.stack.addWidget(workspace)
         self.stack.setCurrentIndex(self.stack.count() - 1)
@@ -700,7 +768,7 @@ class MedicalWorkspace(QMainWindow):
         return os.path.abspath(asset_path)
     
     def load_model_data(self):
-        """Load 3D data for the current model and organ, split into 3 parts."""
+        """Load 3D data for the current model and organ, using multiple segmented files."""
         if self.viewer_3d is None:
             return
         
@@ -708,31 +776,32 @@ class MedicalWorkspace(QMainWindow):
         self.viewer_3d.reset_viewer()
         QApplication.processEvents()
             
-        asset_path = self.get_asset_path()
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        model_folder = self.MODEL_FOLDERS.get(self.current_model, "SwinUnter")
         
-        if os.path.exists(asset_path):
-            print(f"Loading asset: {asset_path}")
-            QApplication.processEvents()
-            if self.viewer_3d.load_nifti(asset_path):
+        parts = self.organ_data[self.current_organ].get(self.current_model, [])
+        part_colors = [
+            (1.0, 0.7, 0.28),   # Orange #FFB347
+            (1.0, 0.42, 0.54),  # Pink #FF6B8A
+            (0.3, 0.83, 0.67),  # Teal #4DD4AC
+            (0.66, 0.33, 0.97), # Purple #A855F7
+            (0.13, 0.83, 0.93)  # Cyan #22D3EE
+        ]
+        
+        for i, (file_name, part_label) in enumerate(parts):
+            asset_path = os.path.join(script_dir, "..", "Assets", model_folder, self.current_organ, file_name)
+            asset_path = os.path.abspath(asset_path)
+            
+            if os.path.exists(asset_path):
+                print(f"Loading part: {part_label} from {asset_path}")
+                color = part_colors[i % len(part_colors)]
+                self.viewer_3d.add_part_from_nifti(asset_path, part_label, color, opacity=0.7)
                 QApplication.processEvents()
-                
-                # Get part names and colors
-                part_names = self.organ_data[self.current_organ]
-                part_colors = [
-                    (1.0, 0.7, 0.28),   # Orange #FFB347
-                    (1.0, 0.42, 0.54),  # Pink #FF6B8A
-                    (0.3, 0.83, 0.67)   # Teal #4DD4AC
-                ]
-                
-                # Generate 3 parts
-                if self.viewer_3d.generate_3_parts(part_names, part_colors, opacity=0.7):
-                    QApplication.processEvents()
-                    # Connect part controls to viewer
-                    self.connect_part_controls()
             else:
-                print(f"Failed to load: {asset_path}")
-        else:
-            print(f"Asset not found: {asset_path}")
+                print(f"Asset not found: {asset_path}")
+        
+        # Connect part controls to viewer
+        self.connect_part_controls()
     
     def connect_part_controls(self):
         """Connect part control widgets to their respective 3D actors."""
@@ -766,8 +835,34 @@ class MedicalWorkspace(QMainWindow):
         # Update metrics display
         self.update_metrics_display()
         
+        # Refresh layer controls
+        self.refresh_layer_controls()
+        
         # Reload 3D visualization
         self.load_model_data()
+
+    def refresh_layer_controls(self):
+        """Refresh the right panel layer controls when model or organ changes."""
+        # Clear existing controls
+        for control in self.part_controls:
+            control.setParent(None)
+        self.part_controls = []
+        
+        # Remove old layout items (except header)
+        while self.right_panel_layout.count() > 1:
+            item = self.right_panel_layout.takeAt(1)
+            if item.widget():
+                item.widget().setParent(None)
+
+        # Recreate controls
+        part_colors = ["#FFB347", "#FF6B8A", "#4DD4AC", "#A855F7", "#22D3EE"]
+        parts = self.organ_data[self.current_organ].get(self.current_model, [])
+        for i, (file_name, part_label) in enumerate(parts):
+            color = part_colors[i % len(part_colors)]
+            control = PartControl(part_label, color)
+            add_shadow(control, blur=15, offset=3)
+            self.right_panel_layout.insertWidget(self.right_panel_layout.count() - 1, control)
+            self.part_controls.append(control)
     
     def update_metrics_display(self):
         """Update the metrics labels with current model data."""
